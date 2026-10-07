@@ -1,10 +1,14 @@
 import streamlit as st
 import pandas as pd
+import pdfplumber
 import io
+import re
 import os
 import json
 import requests
 import base64
+from io import BytesIO
+from PIL import Image
 
 # --- CẤU HÌNH TRANG ---
 st.set_page_config(
@@ -16,68 +20,128 @@ st.set_page_config(
 # 🔗 DÁN LINK GOOGLE WEB APP SCRIPT CỦA THẦY/CÔ VÀO ĐÂY:
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxdJTfcS9TZqkogncwxjVag27V2zgbPZGkW0qfhQd7JgIdzC3Mt32wo_CZfgYx2Xu1fjQ/exec"
 
-# --- CSS TỐI ƯU GIAO DIỆN CHIA ĐÔI MÀN HÌNH ---
+# --- CSS GIAO DIỆN & TÍNH NĂNG BUNG TOÀN MÀN HÌNH (LIGHTBOX MODAL) ---
 st.markdown("""
 <style>
-    .stApp { background-color: #f1f5f9; }
+    .stApp { background-color: #f8fafc; }
     
-    /* Thẻ thông tin học sinh */
     .student-info-card {
         background-color: #ffffff;
-        border-radius: 10px;
-        padding: 16px 20px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-        border-left: 5px solid #2563eb;
-        margin-bottom: 15px;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 4px 15px rgba(37, 99, 235, 0.1);
+        border: 2px solid #2563eb;
+        margin-bottom: 25px;
     }
     
-    /* Khung phiếu làm bài bên phải */
-    .answer-box {
+    .quiz-card {
         background-color: #ffffff;
         border-radius: 12px;
-        padding: 18px;
+        padding: 24px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.06);
         border: 1px solid #cbd5e1;
-        margin-bottom: 16px;
+        margin-bottom: 28px;
     }
 
-    /* Tiêu đề từng phần */
-    .part-header-sm {
+    .part-header {
         background: linear-gradient(135deg, #1e40af, #2563eb);
         color: white;
-        padding: 10px 16px;
-        border-radius: 8px;
+        padding: 16px 24px;
+        border-radius: 10px;
         font-weight: bold;
-        font-size: 16px !important;
-        margin-top: 15px;
-        margin-bottom: 15px;
+        font-size: 20px !important;
+        margin-top: 25px;
+        margin-bottom: 20px;
     }
     
-    .q-number {
+    .q-title {
         font-weight: bold;
         color: #1e3a8a;
-        font-size: 16px !important;
-        margin-bottom: 6px;
+        font-size: 20px !important;
+        margin-bottom: 12px;
     }
 
-    /* Định dạng Radio button gọn gàng */
     .stRadio label p, .stRadio div[role="radiogroup"] p {
-        font-size: 16px !important;
+        font-size: 18px !important;
         font-weight: 600 !important;
         color: #0f172a !important;
     }
-
-    .stTextInput input {
-        font-size: 16px !important;
-    }
     
-    /* Sticky cho khung PDF bên trái khi cuộn */
-    @media (min-width: 992px) {
-        div[data-testid="stColumn"]:first-child {
-            position: sticky;
-            top: 1rem;
-            height: calc(100vh - 2rem);
-        }
+    .stTextInput input {
+        font-size: 18px !important;
+        padding: 10px 14px !important;
+    }
+
+    /* === KHUNG LIGHTBOX BUNG TOÀN MÀN HÌNH === */
+    .lightbox-modal {
+        display: none;
+        position: fixed;
+        z-index: 999999;
+        padding-top: 30px;
+        left: 0;
+        top: 0;
+        width: 100vw;
+        height: 100vh;
+        overflow: auto;
+        background-color: rgba(0, 0, 0, 0.92);
+        backdrop-filter: blur(5px);
+    }
+
+    .lightbox-modal:target {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .lightbox-content {
+        margin: auto;
+        display: block;
+        max-width: 95vw;
+        max-height: 85vh;
+        object-fit: contain;
+        border-radius: 8px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+    }
+
+    .lightbox-close {
+        position: fixed;
+        top: 15px;
+        right: 25px;
+        color: #ffffff;
+        font-size: 35px;
+        font-weight: bold;
+        text-decoration: none;
+        background: #ef4444;
+        padding: 5px 18px;
+        border-radius: 30px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        z-index: 1000000;
+    }
+
+    .lightbox-close:hover {
+        background: #dc2626;
+        color: white;
+    }
+
+    .zoom-btn {
+        display: inline-block;
+        background-color: #2563eb;
+        color: #ffffff !important;
+        padding: 8px 18px;
+        text-decoration: none;
+        border-radius: 8px;
+        font-weight: bold;
+        font-size: 15px;
+        margin-top: 8px;
+        margin-bottom: 16px;
+        box-shadow: 0 3px 8px rgba(37, 99, 235, 0.3);
+        transition: all 0.2s;
+    }
+
+    .zoom-btn:hover {
+        background-color: #1d4ed8;
+        transform: translateY(-1px);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -89,7 +153,7 @@ KEY_SAVE_PATH = os.path.join(STORAGE_DIR, "answer_key.json")
 if not os.path.exists(STORAGE_DIR):
     os.makedirs(STORAGE_DIR)
 
-# --- XỬ LÝ CHẾ ĐỘ HỌC SINH / GIÁO VIÊN ---
+# --- CHẾ ĐỘ HỌC SINH / GIÁO VIÊN ---
 is_student_mode = False
 try:
     is_student_mode = st.query_params.get("mode") == "student"
@@ -100,6 +164,115 @@ except Exception:
         is_student_mode = mode_val[0] == "student" if isinstance(mode_val, list) else mode_val == "student"
     except Exception:
         is_student_mode = False
+
+try:
+    cache_decorator = st.cache_data(show_spinner="Đang xử lý đề thi...")
+except Exception:
+    cache_decorator = st.cache(suppress_st_warning=True)
+
+# --- CẮT ẢNH TỪNG CÂU HỎI TỪ PDF (300 DPI) ---
+@cache_decorator
+def extract_question_images(pdf_bytes):
+    q_images = {}
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        q_markers = []
+        for page_idx, page in enumerate(pdf.pages):
+            words = page.extract_words()
+            for i, w in enumerate(words):
+                text = w['text'].strip()
+                m = re.search(r'^Câu\s*(\d+)[\.\:]?', text, re.IGNORECASE)
+                if m:
+                    q_num = int(m.group(1))
+                    q_markers.append({'q_num': q_num, 'page_idx': page_idx, 'top': w['top']})
+                elif re.match(r'^Câu$', text, re.IGNORECASE) and i + 1 < len(words):
+                    next_text = words[i+1]['text'].strip()
+                    m_num = re.search(r'^\d+', next_text)
+                    if m_num:
+                        q_num = int(m_num.group())
+                        q_markers.append({'q_num': q_num, 'page_idx': page_idx, 'top': w['top']})
+
+        unique_markers = []
+        seen = set()
+        for qm in sorted(q_markers, key=lambda x: (x['page_idx'], x['top'])):
+            if qm['q_num'] not in seen:
+                unique_markers.append(qm)
+                seen.add(qm['q_num'])
+                
+        unique_markers = sorted(unique_markers, key=lambda x: x['q_num'])
+
+        for idx, curr in enumerate(unique_markers):
+            q_num = curr['q_num']
+            p_start = curr['page_idx']
+            top_y = max(0, curr['top'] - 6)
+            
+            if idx + 1 < len(unique_markers):
+                next_q = unique_markers[idx + 1]
+                p_end = next_q['page_idx']
+                bottom_y = next_q['top'] - 4
+            else:
+                p_end = p_start
+                bottom_y = pdf.pages[p_start].height - 5
+
+            if p_start == p_end:
+                page = pdf.pages[p_start]
+                if bottom_y > top_y + 10:
+                    try:
+                        crop_box = (0, top_y, page.width, bottom_y)
+                        img = page.crop(crop_box).to_image(resolution=300).original
+                        q_images[q_num] = img
+                    except Exception:
+                        pass
+            else:
+                try:
+                    page1 = pdf.pages[p_start]
+                    img1 = page1.crop((0, top_y, page1.width, page1.height - 5)).to_image(resolution=300).original
+                    page2 = pdf.pages[p_end]
+                    img2 = page2.crop((0, 0, page2.width, bottom_y)).to_image(resolution=300).original
+                    
+                    merged_w = max(img1.width, img2.width)
+                    merged_h = img1.height + img2.height
+                    merged_img = Image.new('RGB', (merged_w, merged_h), (255, 255, 255))
+                    merged_img.paste(img1, (0, 0))
+                    merged_img.paste(img2, (0, img1.height))
+                    q_images[q_num] = merged_img
+                except Exception:
+                    pass
+    return q_images
+
+def pil_to_base64(img):
+    buffered = BytesIO()
+    img.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode()
+
+# --- HÀM HIỂN THỊ ẢNH CÂU HỎI KÈM KHUNG BUNG TOÀN MÀN HÌNH ---
+def display_question_with_lightbox(q_num, img):
+    img_b64 = pil_to_base64(img)
+    modal_id = f"img_modal_q{q_num}"
+    
+    # HTML hiển thị ảnh + Nút bấm + Khung Modal bung tràn màn hình
+    html_code = f'''
+    <div>
+        <!-- 1. Ảnh hiển thị bình thường trên thẻ bài thi (Bấm vào ảnh để bung) -->
+        <a href="#{modal_id}">
+            <img src="data:image/png;base64,{img_b64}" style="max-width: 100%; border-radius: 6px; cursor: zoom-in;" title="Bấm vào đây để phóng to toàn màn hình" />
+        </a>
+        <br>
+        <!-- 2. Nút bấm bổ trợ bên dưới -->
+        <a href="#{modal_id}" class="zoom-btn">🔍 Phóng to tràn màn hình Câu {q_num}</a>
+
+        <!-- 3. Khung Modal Lớp phủ màu đen tràn 100% màn hình khi kích hoạt -->
+        <div id="{modal_id}" class="lightbox-modal">
+            <a href="#close" class="lightbox-close">✕ Đóng</a>
+            <a href="#close">
+                <img class="lightbox-content" src="data:image/png;base64,{img_b64}" alt="Câu {q_num}" />
+            </a>
+            <p style="color: #cbd5e1; text-align: center; margin-top: 10px; font-size: 15px;">
+                💡 Chạm/bấm vào ảnh hoặc nút [✕ Đóng] ở góc trên để thu nhỏ lại.
+            </p>
+        </div>
+    </div>
+    '''
+    st.markdown(html_code, unsafe_allow_html=True)
 
 if 'user_answers' not in st.session_state:
     st.session_state.user_answers = {}
@@ -125,12 +298,16 @@ if not is_student_mode:
                 with open(KEY_SAVE_PATH, "w", encoding="utf-8") as f:
                     json.dump(key_dict, f, ensure_ascii=False, indent=2)
                 
-                st.success("🎉 Đã xuất bản đề thi thành công!")
+                try:
+                    st.cache_data.clear()
+                except Exception:
+                    st.legacy_caching.clear_cache()
+                    
+                st.success("🎉 Đã cập nhật đề thi thành công!")
             else:
                 st.error("Vui lòng tải đủ cả file PDF và Excel!")
 
     st.title("🎓 HỆ THỐNG QUẢN LÝ ĐỀ THI (GIÁO VIÊN)")
-    
     student_url = f"https://kiemtraonline.streamlit.app/?mode=student"
     
     if os.path.exists(PDF_SAVE_PATH) and os.path.exists(KEY_SAVE_PATH):
@@ -141,18 +318,17 @@ if not is_student_mode:
         st.warning("👈 Vui lòng tải file Đề (PDF) và Đáp án (Excel) ở thanh bên trái!")
 
 # ==========================================
-# 🎓 GIAO DIỆN HỌC SINH (CHIA ĐÔI MÀN HÌNH)
+# 🎓 GIAO DIỆN HỌC SINH
 # ==========================================
 if is_student_mode:
     st.markdown("<style>section[data-testid='stSidebar'] {display: none;}</style>", unsafe_allow_html=True)
-    
     st.title("🎓 ĐỀ THI TRẮC NGHIỆM TRỰC TUYẾN")
     
     if os.path.exists(PDF_SAVE_PATH) and os.path.exists(KEY_SAVE_PATH):
-        # 1. THÔNG TIN HỌC SINH
         st.markdown("""
         <div class="student-info-card">
-            <b style="color: #1e40af; font-size: 18px;">👤 THÔNG TIN THÍ SINH</b> (Điền đầy đủ trước khi nộp bài)
+            <h3 style="color: #1e40af; margin-top: 0; font-size: 22px;">👤 THÔNG TIN THÍ SINH</h3>
+            <p style="color: #475569; font-size: 16px; margin-bottom: 10px;">Điền đầy đủ Họ tên và Lớp trước khi nộp bài.</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -162,68 +338,29 @@ if is_student_mode:
         with col_class:
             student_class = st.text_input("Lớp (*):", placeholder="Ví dụ: 12A1")
 
+        st.info("💡 **Mẹo:** Học sinh có thể **bấm trực tiếp vào ảnh** hoặc nút **`🔍 Phóng to tràn màn hình`** để mở rộng ảnh câu hỏi ra toàn màn hình.")
         st.markdown("---")
 
-        # ĐỌC FILE PDF ĐỀ THI
         with open(PDF_SAVE_PATH, "rb") as f:
             pdf_bytes = f.read()
         with open(KEY_SAVE_PATH, "r", encoding="utf-8") as f:
             answer_key = json.load(f)
-
-        pdf_b64 = base64.b64encode(pdf_bytes).decode('utf-8')
-
-        # 2. BỐ CỤC CHIA ĐÔI MÀN HÌNH (CỘT TRÁI: ĐỀ THI | CỘT PHẢI: PHIẾU BÀI LÀM)
-        col_left, col_right = st.columns([1.25, 1.0])
-
-        # ------------------------------------
-        # CỘT TRÁI: TRÌNH XEM ĐỀ THI PHÓNG TO / THU NHỎ
-        # ------------------------------------
-        with col_left:
-            st.subheader("📄 ĐỀ THI (Dùng nút +, - để phóng to/thu nhỏ)")
             
-            # Khung hiển thị PDF trực tiếp có sẵn thanh công cụ Zoom/Fit/Scroll
-            pdf_display_html = f'''
-            <div style="border: 2px solid #2563eb; border-radius: 10px; overflow: hidden; background: #525659;">
-                <iframe src="data:application/pdf;base64,{pdf_b64}#toolbar=1&navpanes=0&view=FitH" 
-                        width="100%" 
-                        height="820px" 
-                        style="border:none;">
-                </iframe>
-            </div>
-            '''
-            st.markdown(pdf_display_html, unsafe_allow_html=True)
-            
-            # Nút dự phòng mở toàn màn hình
-            btn_full = f'''
-            <div style="margin-top: 10px; text-align: center;">
-                <a href="data:application/pdf;base64,{pdf_b64}" target="_blank" style="
-                    display: inline-block;
-                    background-color: #2563eb;
-                    color: #ffffff;
-                    padding: 8px 16px;
-                    text-decoration: none;
-                    border-radius: 6px;
-                    font-weight: bold;
-                    font-size: 15px;
-                    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
-                ">🔍 Mở Đề Thi Toàn Màn Hình Trang Mới ↗️</a>
-            </div>
-            '''
-            st.markdown(btn_full, unsafe_allow_html=True)
-
-        # ------------------------------------
-        # CỘT PHẢI: PHIẾU TRẢ LỜI ĐÁP ÁN
-        # ------------------------------------
-        with col_right:
-            st.subheader("📝 PHIẾU TRẢ LỜI")
-            
-            # PHẦN I
-            st.markdown('<div class="part-header-sm">PHẦN I. Trắc nghiệm 4 lựa chọn (Câu 1 - 12)</div>', unsafe_allow_html=True)
-            for q_num in range(1, 13):
-                st.markdown("<div class='answer-box'>", unsafe_allow_html=True)
+        q_images = extract_question_images(pdf_bytes)
+        
+        # PHẦN I
+        st.markdown('<div class="part-header">PHẦN I. Trắc nghiệm 4 lựa chọn (Câu 1 đến Câu 12)</div>', unsafe_allow_html=True)
+        for q_num in range(1, 13):
+            if q_num in q_images:
+                st.markdown("<div class='quiz-card'>", unsafe_allow_html=True)
+                st.markdown(f"<div class='q-title'>Câu {q_num}</div>", unsafe_allow_html=True)
+                
+                # Hiển thị ảnh kèm Modal bung tràn màn hình
+                display_question_with_lightbox(q_num, q_images[q_num])
+                
                 ans_key = f"p1_{q_num}"
                 selected = st.radio(
-                    f"Câu {q_num}:", 
+                    f"Chọn đáp án Câu {q_num}:", 
                     ["A", "B", "C", "D"], 
                     horizontal=True, 
                     key=ans_key,
@@ -233,15 +370,21 @@ if is_student_mode:
                     st.session_state.user_answers[ans_key] = selected
                 st.markdown("</div>", unsafe_allow_html=True)
 
-            # PHẦN II
-            st.markdown('<div class="part-header-sm">PHẦN II. Trắc nghiệm Đúng / Sai (Câu 13 - 16)</div>', unsafe_allow_html=True)
-            for q_num in range(13, 17):
-                st.markdown("<div class='answer-box'>", unsafe_allow_html=True)
-                st.markdown(f"<div class='q-number'>Câu {q_num}:</div>", unsafe_allow_html=True)
-                cols = st.columns(2)
+        # PHẦN II
+        st.markdown('<div class="part-header">PHẦN II. Trắc nghiệm Đúng / Sai (Câu 13 đến Câu 16)</div>', unsafe_allow_html=True)
+        for q_num in range(13, 17):
+            if q_num in q_images:
+                st.markdown("<div class='quiz-card'>", unsafe_allow_html=True)
+                st.markdown(f"<div class='q-title'>Câu {q_num}</div>", unsafe_allow_html=True)
+                
+                # Hiển thị ảnh kèm Modal bung tràn màn hình
+                display_question_with_lightbox(q_num, q_images[q_num])
+                
+                st.markdown("<p style='font-size: 18px; font-weight: bold;'>Chọn Đúng/Sai cho các mệnh đề a), b), c), d):</p>", unsafe_allow_html=True)
+                cols = st.columns(4)
                 for idx, sub in enumerate(['a', 'b', 'c', 'd']):
                     ans_key = f"p2_{q_num}_{sub}"
-                    with cols[idx % 2]:
+                    with cols[idx]:
                         sub_sel = st.radio(
                             f"Mệnh đề {sub}):", 
                             ["Đúng", "Sai"], 
@@ -253,90 +396,99 @@ if is_student_mode:
                             st.session_state.user_answers[ans_key] = sub_sel
                 st.markdown("</div>", unsafe_allow_html=True)
 
-            # PHẦN III
-            st.markdown('<div class="part-header-sm">PHẦN III. Trả lời ngắn (Câu 17 - 22)</div>', unsafe_allow_html=True)
-            for q_num in range(17, 23):
-                st.markdown("<div class='answer-box'>", unsafe_allow_html=True)
+        # PHẦN III
+        st.markdown('<div class="part-header">PHẦN III. Trả lời ngắn (Câu 17 đến Câu 22)</div>', unsafe_allow_html=True)
+        for q_num in range(17, 23):
+            if q_num in q_images:
+                st.markdown("<div class='quiz-card'>", unsafe_allow_html=True)
+                st.markdown(f"<div class='q-title'>Câu {q_num}</div>", unsafe_allow_html=True)
+                
+                # Hiển thị ảnh kèm Modal bung tràn màn hình
+                display_question_with_lightbox(q_num, q_images[q_num])
+                
                 ans_key = f"p3_{q_num}"
                 user_val = st.text_input(
-                    f"Đáp án Câu {q_num}:", 
+                    f"Nhập đáp án dạng số cho Câu {q_num}:", 
                     value=st.session_state.user_answers.get(ans_key, ""), 
-                    key=ans_key,
-                    placeholder="Nhập số..."
+                    key=ans_key
                 )
                 if user_val:
                     st.session_state.user_answers[ans_key] = user_val.strip()
                 st.markdown("</div>", unsafe_allow_html=True)
 
-            # NÚT NỘP BÀI
-            st.markdown("---")
-            if st.button("📝 NỘP BÀI VÀ CHẤM ĐIỂM", type="primary", use_container_width=True):
-                if not student_name.strip() or not student_class.strip():
-                    st.error("❌ **BẠN CHƯA ĐIỀN THÔNG TIN!** Nhập Họ tên & Lớp ở đầu trang.")
+        # NÚT NỘP BÀI THI
+        st.markdown("---")
+        if st.button("📝 NỘP BÀI VÀ CHẤM ĐIỂM", type="primary"):
+            if not student_name.strip() or not student_class.strip():
+                st.error("❌ **BẠN CHƯA ĐIỀN THÔNG TIN!** Vui lòng nhập **Họ tên** và **Lớp** ở đầu trang trước khi nộp bài.")
+            else:
+                score_p1, score_p2, score_p3 = 0.0, 0.0, 0.0
+                
+                # 1. Chấm Phần I
+                for q_num in range(1, 13):
+                    u_ans = st.session_state.user_answers.get(f"p1_{q_num}", "").upper()
+                    c_ans = answer_key.get(str(q_num).lower(), "").upper()
+                    if u_ans and c_ans and u_ans == c_ans:
+                        score_p1 += 0.25
+
+                # 2. Chấm Phần II
+                p2_map = {1: 0.1, 2: 0.25, 3: 0.5, 4: 1.0}
+                for q_num in range(13, 17):
+                    correct_count = 0
+                    for sub in ['a', 'b', 'c', 'd']:
+                        u_ans = st.session_state.user_answers.get(f"p2_{q_num}_{sub}", "").lower()
+                        c_ans = answer_key.get(f"{q_num}{sub}".lower(), "").lower()
+                        if u_ans in ['đúng', 'd', 'true']: u_ans = 'đúng'
+                        elif u_ans in ['sai', 's', 'false']: u_ans = 'sai'
+                        if c_ans in ['đúng', 'd', 'true']: c_ans = 'đúng'
+                        elif c_ans in ['sai', 's', 'false']: c_ans = 'sai'
+                        
+                        if u_ans and c_ans and u_ans == c_ans:
+                            correct_count += 1
+                    score_p2 += p2_map.get(correct_count, 0.0)
+
+                # 3. Chấm Phần III
+                for q_num in range(17, 23):
+                    u_ans = st.session_state.user_answers.get(f"p3_{q_num}", "").replace(',', '.')
+                    c_ans = answer_key.get(str(q_num).lower(), "").replace(',', '.')
+                    if u_ans and c_ans and u_ans == c_ans:
+                        score_p3 += 0.5
+
+                total_score = round(score_p1 + score_p2 + score_p3, 2)
+                
+                # 4. GỬI KẾT QUẢ VỀ GOOGLE SHEET
+                if WEB_APP_URL and "YOUR_SCRIPT_ID" not in WEB_APP_URL:
+                    payload = {
+                        "student_name": student_name.strip(),
+                        "student_class": student_class.strip(),
+                        "score_p1": round(score_p1, 2),
+                        "score_p2": round(score_p2, 2),
+                        "score_p3": round(score_p3, 2),
+                        "total_score": total_score
+                    }
+                    try:
+                        res = requests.post(WEB_APP_URL, json=payload).json()
+                        if res.get("result") == "already_submitted":
+                            st.error(f"🚫 **THÍ SINH {student_name.upper()} (LỚP {student_class.upper()}) ĐÃ NỘP BÀI TRƯỚC ĐÓ RỒI!**")
+                        elif res.get("result") == "success":
+                            try:
+                                st.balloons()
+                            except Exception:
+                                pass
+                            st.success(f"🎉 **NỘP BÀI THÀNH CÔNG! THÍ SINH: {student_name.upper()} ({student_class.upper()})**")
+                            st.subheader(f"🏆 Tổng điểm: {total_score} / 10.0")
+                            col1, col2, col3 = st.columns(3)
+                            col1.metric("Phần I", f"{round(score_p1, 2)}đ / 3.0đ")
+                            col2.metric("Phần II", f"{round(score_p2, 2)}đ / 4.0đ")
+                            col3.metric("Phần III", f"{round(score_p3, 2)}đ / 3.0đ")
+                    except Exception:
+                        st.error("Lỗi kết nối lưu điểm vào Google Sheet. Vui lòng thử lại!")
                 else:
-                    score_p1, score_p2, score_p3 = 0.0, 0.0, 0.0
-                    
-                    # 1. Chấm Phần I
-                    for q_num in range(1, 13):
-                        u_ans = st.session_state.user_answers.get(f"p1_{q_num}", "").upper()
-                        c_ans = answer_key.get(str(q_num).lower(), "").upper()
-                        if u_ans and c_ans and u_ans == c_ans:
-                            score_p1 += 0.25
-
-                    # 2. Chấm Phần II
-                    p2_map = {1: 0.1, 2: 0.25, 3: 0.5, 4: 1.0}
-                    for q_num in range(13, 17):
-                        correct_count = 0
-                        for sub in ['a', 'b', 'c', 'd']:
-                            u_ans = st.session_state.user_answers.get(f"p2_{q_num}_{sub}", "").lower()
-                            c_ans = answer_key.get(f"{q_num}{sub}".lower(), "").lower()
-                            if u_ans in ['đúng', 'd', 'true']: u_ans = 'đúng'
-                            elif u_ans in ['sai', 's', 'false']: u_ans = 'sai'
-                            if c_ans in ['đúng', 'd', 'true']: c_ans = 'đúng'
-                            elif c_ans in ['sai', 's', 'false']: c_ans = 'sai'
-                            
-                            if u_ans and c_ans and u_ans == c_ans:
-                                correct_count += 1
-                        score_p2 += p2_map.get(correct_count, 0.0)
-
-                    # 3. Chấm Phần III
-                    for q_num in range(17, 23):
-                        u_ans = st.session_state.user_answers.get(f"p3_{q_num}", "").replace(',', '.')
-                        c_ans = answer_key.get(str(q_num).lower(), "").replace(',', '.')
-                        if u_ans and c_ans and u_ans == c_ans:
-                            score_p3 += 0.5
-
-                    total_score = round(score_p1 + score_p2 + score_p3, 2)
-                    
-                    # 4. GỬI KẾT QUẢ VỀ GOOGLE SHEET
-                    if WEB_APP_URL and "YOUR_SCRIPT_ID" not in WEB_APP_URL:
-                        payload = {
-                            "student_name": student_name.strip(),
-                            "student_class": student_class.strip(),
-                            "score_p1": round(score_p1, 2),
-                            "score_p2": round(score_p2, 2),
-                            "score_p3": round(score_p3, 2),
-                            "total_score": total_score
-                        }
-                        try:
-                            res = requests.post(WEB_APP_URL, json=payload).json()
-                            if res.get("result") == "already_submitted":
-                                st.error(f"🚫 **THÍ SINH {student_name.upper()} ({student_class.upper()}) ĐÃ NỘP BÀI TRƯỚC ĐÓ!**")
-                            elif res.get("result") == "success":
-                                try: st.balloons()
-                                except Exception: pass
-                                st.success(f"🎉 **NỘP BÀI THÀNH CÔNG! THÍ SINH: {student_name.upper()} ({student_class.upper()})**")
-                                st.subheader(f"🏆 Tổng điểm: {total_score} / 10.0")
-                                col1, col2, col3 = st.columns(3)
-                                col1.metric("Phần I", f"{round(score_p1, 2)}đ / 3.0đ")
-                                col2.metric("Phần II", f"{round(score_p2, 2)}đ / 4.0đ")
-                                col3.metric("Phần III", f"{round(score_p3, 2)}đ / 3.0đ")
-                        except Exception:
-                            st.error("Lỗi kết nối Google Sheet. Vui lòng thử lại!")
-                    else:
-                        try: st.balloons()
-                        except Exception: pass
-                        st.success(f"🎉 **ĐÃ NỘP BÀI THÀNH CÔNG! THÍ SINH: {student_name.upper()} ({student_class.upper()})**")
-                        st.subheader(f"🏆 Tổng điểm: {total_score} / 10.0")
+                    try:
+                        st.balloons()
+                    except Exception:
+                        pass
+                    st.success(f"🎉 **ĐÃ NỘP BÀI THÀNH CÔNG! THÍ SINH: {student_name.upper()} ({student_class.upper()})**")
+                    st.subheader(f"🏆 Tổng điểm: {total_score} / 10.0")
     else:
         st.warning("⚠️ Hiện tại chưa có bài thi nào được đăng. Vui lòng liên hệ Giáo viên!")
