@@ -15,13 +15,14 @@ st.set_page_config(
     page_icon="🎓"
 )
 
-# 🔗 DÁN LINK GOOGLE WEB APP SCRIPT CỦA THẦY/CÔ VÀO ĐÂY (NẾU CÓ):
-WEB_APP_URL = "https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec"
+# 🔗 DÁN LINK GOOGLE WEB APP SCRIPT CỦA THẦY/CÔ VÀO ĐÂY:
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxdJTfcS9TZqkogncwxjVag27V2zgbPZGkW0qfhQd7JgIdzC3Mt32wo_CZfgYx2Xu1fjQ/exec"
 
-# --- CSS GIAO DIỆN ---
+# --- CSS TỐI ƯU GIAO DIỆN & NÚT PHÓNG TO ---
 st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
+    
     .student-info-card {
         background-color: #ffffff;
         border-radius: 12px;
@@ -30,29 +31,55 @@ st.markdown("""
         border: 2px solid #2563eb;
         margin-bottom: 25px;
     }
+    
     .quiz-card {
         background-color: #ffffff;
         border-radius: 12px;
-        padding: 20px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        border: 1px solid #e2e8f0;
-        margin-bottom: 24px;
+        padding: 24px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+        border: 1px solid #cbd5e1;
+        margin-bottom: 28px;
     }
+
     .part-header {
         background: linear-gradient(135deg, #1e40af, #2563eb);
         color: white;
-        padding: 12px 20px;
-        border-radius: 8px;
+        padding: 16px 24px;
+        border-radius: 10px;
         font-weight: bold;
-        font-size: 18px;
-        margin-top: 20px;
-        margin-bottom: 16px;
+        font-size: 20px !important;
+        margin-top: 25px;
+        margin-bottom: 20px;
     }
+    
     .q-title {
         font-weight: bold;
         color: #1e3a8a;
-        font-size: 16px;
-        margin-bottom: 10px;
+        font-size: 20px !important;
+        margin-bottom: 12px;
+    }
+
+    .stRadio label p, .stRadio div[role="radiogroup"] p {
+        font-size: 18px !important;
+        font-weight: 600 !important;
+        color: #0f172a !important;
+    }
+    
+    .stTextInput input {
+        font-size: 18px !important;
+        padding: 10px 14px !important;
+    }
+    
+    .stTextInput label p {
+        font-size: 18px !important;
+        font-weight: 600 !important;
+        color: #1e293b !important;
+    }
+
+    .stButton button {
+        font-size: 18px !important;
+        font-weight: bold !important;
+        border-radius: 8px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -64,10 +91,24 @@ KEY_SAVE_PATH = os.path.join(STORAGE_DIR, "answer_key.json")
 if not os.path.exists(STORAGE_DIR):
     os.makedirs(STORAGE_DIR)
 
-query_params = st.query_params
-is_student_mode = query_params.get("mode") == "student"
+# --- TƯƠNG THÍCH MỌI PHIÊN BẢN STREAMLIT / PYTHON ---
+is_student_mode = False
+try:
+    is_student_mode = st.query_params.get("mode") == "student"
+except Exception:
+    try:
+        params = st.experimental_get_query_params()
+        mode_val = params.get("mode", [""])
+        is_student_mode = mode_val[0] == "student" if isinstance(mode_val, list) else mode_val == "student"
+    except Exception:
+        is_student_mode = False
 
-@st.cache_data(show_spinner="Đang tải đề thi...")
+try:
+    cache_decorator = st.cache_data(show_spinner="Đang xử lý đề thi...")
+except Exception:
+    cache_decorator = st.cache(suppress_st_warning=True)
+
+@cache_decorator
 def extract_question_images(pdf_bytes):
     q_images = {}
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -114,16 +155,16 @@ def extract_question_images(pdf_bytes):
                 if bottom_y > top_y + 10:
                     try:
                         crop_box = (0, top_y, page.width, bottom_y)
-                        img = page.crop(crop_box).to_image(resolution=200).original
+                        img = page.crop(crop_box).to_image(resolution=300).original
                         q_images[q_num] = img
                     except Exception:
                         pass
             else:
                 try:
                     page1 = pdf.pages[p_start]
-                    img1 = page1.crop((0, top_y, page1.width, page1.height - 5)).to_image(resolution=200).original
+                    img1 = page1.crop((0, top_y, page1.width, page1.height - 5)).to_image(resolution=300).original
                     page2 = pdf.pages[p_end]
-                    img2 = page2.crop((0, 0, page2.width, bottom_y)).to_image(resolution=200).original
+                    img2 = page2.crop((0, 0, page2.width, bottom_y)).to_image(resolution=300).original
                     
                     merged_w = max(img1.width, img2.width)
                     merged_h = img1.height + img2.height
@@ -135,11 +176,26 @@ def extract_question_images(pdf_bytes):
                     pass
     return q_images
 
+# --- HÀM HIỂN THỊ HÌNH ẢNH KÈM NÚT BUNG / PHÓNG TO ---
+def display_question_image(q_num, img):
+    # 1. Hiển thị ảnh kích thước chuẩn
+    try:
+        st.image(img, use_container_width=True)
+    except Exception:
+        st.image(img, use_column_width=True)
+    
+    # 2. Khung Bung phóng to toàn chiều rộng
+    with st.expander(f"🔍 Bấm vào đây để BUNG TO / PHÓNG ĐẠI ảnh Câu {q_num}"):
+        try:
+            st.image(img, use_container_width=True)
+        except Exception:
+            st.image(img, use_column_width=True)
+
 if 'user_answers' not in st.session_state:
     st.session_state.user_answers = {}
 
 # ==========================================
-# ⚙️ GIAO DIỆN QUẢN LÝ DÀNH CHO GIÁO VIÊN
+# ⚙️ GIAO DIỆN GIÁO VIÊN
 # ==========================================
 if not is_student_mode:
     with st.sidebar:
@@ -147,7 +203,7 @@ if not is_student_mode:
         uploaded_pdf = st.file_uploader("1. Chọn file Đề (PDF):", type=["pdf"])
         uploaded_excel = st.file_uploader("2. Chọn file Đáp án (Excel):", type=["xlsx", "xls"])
         
-        if st.button("💾 XUẤT BẢN ĐỀ THI", type="primary", use_container_width=True):
+        if st.button("💾 XUẤT BẢN ĐỀ THI", type="primary"):
             if uploaded_pdf and uploaded_excel:
                 with open(PDF_SAVE_PATH, "wb") as f:
                     f.write(uploaded_pdf.read())
@@ -159,39 +215,39 @@ if not is_student_mode:
                 with open(KEY_SAVE_PATH, "w", encoding="utf-8") as f:
                     json.dump(key_dict, f, ensure_ascii=False, indent=2)
                 
-                st.cache_data.clear()
-                st.success("🎉 Đã đăng bài thi thành công!")
+                try:
+                    st.cache_data.clear()
+                except Exception:
+                    st.legacy_caching.clear_cache()
+                    
+                st.success("🎉 Đã cập nhật đề thi thành công!")
             else:
                 st.error("Vui lòng tải đủ cả file PDF và Excel!")
 
     st.title("🎓 HỆ THỐNG QUẢN LÝ ĐỀ THI (GIÁO VIÊN)")
     
-    # Lấy đường link hiện tại của ứng dụng
-    student_url = f"https://kiemtraonline.streamlit.app/?mode=student" # Thầy/cô thay tên domain app trên Streamlit Cloud tại đây
+    student_url = f"https://kiemtraonline.streamlit.app/?mode=student"
     
     if os.path.exists(PDF_SAVE_PATH) and os.path.exists(KEY_SAVE_PATH):
-        st.success("✅ Đề thi hiện tại đã sẵn sàng phục vụ học sinh.")
-        st.info("📌 **ĐƯỜNG LINK GỬI CHO HỌC SINH LÀM BÀI:**")
+        st.success("✅ Đề thi đã sẵn sàng trên hệ thống.")
+        st.info("📌 **ĐƯỜNG LINK GỬI CHO HỌC SINH:**")
         st.code(student_url, language="markdown")
-        st.caption("💡 Học sinh mở link này sẽ thấy ngay khung điền Họ tên, Lớp và giao diện làm bài.")
     else:
-        st.warning("👈 Vui lòng tải file Đề (PDF) và Đáp án (Excel) ở menu bên trái để xuất bản bài thi!")
+        st.warning("👈 Vui lòng tải file Đề (PDF) và Đáp án (Excel) ở thanh bên trái!")
 
 # ==========================================
-# 🎓 GIAO DIỆN LÀM BÀI DÀNH CHO HỌC SINH
+# 🎓 GIAO DIỆN HỌC SINH
 # ==========================================
 if is_student_mode:
-    # Ẩn hoàn toàn Sidebar với học sinh
     st.markdown("<style>section[data-testid='stSidebar'] {display: none;}</style>", unsafe_allow_html=True)
     
     st.title("🎓 ĐỀ THI TRẮC NGHIỆM TRỰC TUYẾN")
     
     if os.path.exists(PDF_SAVE_PATH) and os.path.exists(KEY_SAVE_PATH):
-        # --- KHUNG NHẬP HỌ TÊN VÀ LỚP (BẮT BUỘC) ---
         st.markdown("""
         <div class="student-info-card">
-            <h3 style="color: #1e40af; margin-top: 0;">👤 THÔNG TIN THÍ SINH</h3>
-            <p style="color: #64748b; margin-bottom: 15px;">Vui lòng điền đầy đủ Họ tên và Lớp trước khi làm và nộp bài.</p>
+            <h3 style="color: #1e40af; margin-top: 0; font-size: 22px;">👤 THÔNG TIN THÍ SINH</h3>
+            <p style="color: #475569; font-size: 16px; margin-bottom: 10px;">Điền đầy đủ Họ tên và Lớp trước khi nộp bài.</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -201,6 +257,7 @@ if is_student_mode:
         with col_class:
             student_class = st.text_input("Lớp (*):", placeholder="Ví dụ: 12A1")
 
+        st.info("💡 **Mẹo:** Nếu hình câu hỏi nào chữ nhỏ, học sinh chỉ cần bấm nút **🔍 Bấm vào đây để BUNG TO / PHÓNG ĐẠI** dưới bức ảnh đó.")
         st.markdown("---")
 
         with open(PDF_SAVE_PATH, "rb") as f:
@@ -216,10 +273,13 @@ if is_student_mode:
             if q_num in q_images:
                 st.markdown("<div class='quiz-card'>", unsafe_allow_html=True)
                 st.markdown(f"<div class='q-title'>Câu {q_num}</div>", unsafe_allow_html=True)
-                st.image(q_images[q_num], use_container_width=True)
+                
+                # HIỂN THỊ CÂU HỎI KÈM NÚT BUNG PHÓNG TO
+                display_question_image(q_num, q_images[q_num])
+                
                 ans_key = f"p1_{q_num}"
                 selected = st.radio(
-                    f"Chọn đáp án cho Câu {q_num}:", 
+                    f"Chọn đáp án Câu {q_num}:", 
                     ["A", "B", "C", "D"], 
                     horizontal=True, 
                     key=ans_key,
@@ -235,8 +295,11 @@ if is_student_mode:
             if q_num in q_images:
                 st.markdown("<div class='quiz-card'>", unsafe_allow_html=True)
                 st.markdown(f"<div class='q-title'>Câu {q_num}</div>", unsafe_allow_html=True)
-                st.image(q_images[q_num], use_container_width=True)
-                st.markdown("**Chọn Đúng hoặc Sai cho các mệnh đề a), b), c), d):**")
+                
+                # HIỂN THỊ CÂU HỎI KÈM NÚT BUNG PHÓNG TO
+                display_question_image(q_num, q_images[q_num])
+                
+                st.markdown("<p style='font-size: 18px; font-weight: bold;'>Chọn Đúng/Sai cho các mệnh đề a), b), c), d):</p>", unsafe_allow_html=True)
                 cols = st.columns(4)
                 for idx, sub in enumerate(['a', 'b', 'c', 'd']):
                     ans_key = f"p2_{q_num}_{sub}"
@@ -258,10 +321,13 @@ if is_student_mode:
             if q_num in q_images:
                 st.markdown("<div class='quiz-card'>", unsafe_allow_html=True)
                 st.markdown(f"<div class='q-title'>Câu {q_num}</div>", unsafe_allow_html=True)
-                st.image(q_images[q_num], use_container_width=True)
+                
+                # HIỂN THỊ CÂU HỎI KÈM NÚT BUNG PHÓNG TO
+                display_question_image(q_num, q_images[q_num])
+                
                 ans_key = f"p3_{q_num}"
                 user_val = st.text_input(
-                    f"Nhập kết quả dạng số cho Câu {q_num}:", 
+                    f"Nhập đáp án dạng số cho Câu {q_num}:", 
                     value=st.session_state.user_answers.get(ans_key, ""), 
                     key=ans_key
                 )
@@ -271,22 +337,20 @@ if is_student_mode:
 
         # NÚT NỘP BÀI THI
         st.markdown("---")
-        if st.button("📝 NỘP BÀI VÀ CHẤM ĐIỂM", type="primary", use_container_width=True):
-            # KIỂM TRA BẮT BUỘC ĐIỀN HỌ TÊN VÀ LỚP
+        if st.button("📝 NỘP BÀI VÀ CHẤM ĐIỂM", type="primary"):
             if not student_name.strip() or not student_class.strip():
-                st.error("❌ **BẠN CHƯA ĐIỀN THÔNG TIN!** Vui lòng kéo lên đầu trang và nhập đầy đủ **Họ tên** và **Lớp** trước khi bấm Nộp bài.")
+                st.error("❌ **BẠN CHƯA ĐIỀN THÔNG TIN!** Vui lòng nhập **Họ tên** và **Lớp** ở đầu trang trước khi nộp bài.")
             else:
-                st.balloons()
                 score_p1, score_p2, score_p3 = 0.0, 0.0, 0.0
                 
-                # Chấm Phần I
+                # 1. Chấm Phần I
                 for q_num in range(1, 13):
                     u_ans = st.session_state.user_answers.get(f"p1_{q_num}", "").upper()
                     c_ans = answer_key.get(str(q_num).lower(), "").upper()
                     if u_ans and c_ans and u_ans == c_ans:
                         score_p1 += 0.25
 
-                # Chấm Phần II
+                # 2. Chấm Phần II
                 p2_map = {1: 0.1, 2: 0.25, 3: 0.5, 4: 1.0}
                 for q_num in range(13, 17):
                     correct_count = 0
@@ -302,7 +366,7 @@ if is_student_mode:
                             correct_count += 1
                     score_p2 += p2_map.get(correct_count, 0.0)
 
-                # Chấm Phần III
+                # 3. Chấm Phần III
                 for q_num in range(17, 23):
                     u_ans = st.session_state.user_answers.get(f"p3_{q_num}", "").replace(',', '.')
                     c_ans = answer_key.get(str(q_num).lower(), "").replace(',', '.')
@@ -311,7 +375,7 @@ if is_student_mode:
 
                 total_score = round(score_p1 + score_p2 + score_p3, 2)
                 
-                # GỬI KẾT QUẢ ĐIỂM VỀ GOOGLE SHEET (NẾU CÓ ĐƯỜNG LINK API)
+                # 4. GỬI VÀ KIỂM TRA TRÙNG LẶP VỚI GOOGLE SHEET
                 if WEB_APP_URL and "YOUR_SCRIPT_ID" not in WEB_APP_URL:
                     payload = {
                         "student_name": student_name.strip(),
@@ -322,16 +386,29 @@ if is_student_mode:
                         "total_score": total_score
                     }
                     try:
-                        requests.post(WEB_APP_URL, json=payload)
-                        st.success("✅ Đã tự động lưu kết quả vào Google Sheet của Giáo viên!")
+                        res = requests.post(WEB_APP_URL, json=payload).json()
+                        if res.get("result") == "already_submitted":
+                            st.error(f"🚫 **THÍ SINH {student_name.upper()} (LỚP {student_class.upper()}) ĐÃ NỘP BÀI TRƯỚC ĐÓ RỒI!**")
+                            st.warning("⚠️ Hệ thống chỉ nhận bài làm lần đầu tiên.")
+                        elif res.get("result") == "success":
+                            try:
+                                st.balloons()
+                            except Exception:
+                                pass
+                            st.success(f"🎉 **NỘP BÀI THÀNH CÔNG! THÍ SINH: {student_name.upper()} ({student_class.upper()})**")
+                            st.subheader(f"🏆 Tổng điểm: {total_score} / 10.0")
+                            col1, col2, col3 = st.columns(3)
+                            col1.metric("Phần I", f"{round(score_p1, 2)}đ / 3.0đ")
+                            col2.metric("Phần II", f"{round(score_p2, 2)}đ / 4.0đ")
+                            col3.metric("Phần III", f"{round(score_p3, 2)}đ / 3.0đ")
+                    except Exception:
+                        st.error("Lỗi kết nối lưu điểm vào Google Sheet. Vui lòng thử lại!")
+                else:
+                    try:
+                        st.balloons()
                     except Exception:
                         pass
-
-                st.success(f"🎉 **KẾT QUẢ BÀI LÀM - THÍ SINH: {student_name.upper()} (LỚP {student_class.upper()})**")
-                st.subheader(f"🏆 Tổng điểm: {total_score} / 10.0")
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Phần I (Trắc nghiệm)", f"{round(score_p1, 2)}đ / 3.0đ")
-                col2.metric("Phần II (Đúng/Sai)", f"{round(score_p2, 2)}đ / 4.0đ")
-                col3.metric("Phần III (Trả lời ngắn)", f"{round(score_p3, 2)}đ / 3.0đ")
+                    st.success(f"🎉 **ĐÃ NỘP BÀI THÀNH CÔNG! THÍ SINH: {student_name.upper()} ({student_class.upper()})**")
+                    st.subheader(f"🏆 Tổng điểm: {total_score} / 10.0")
     else:
         st.warning("⚠️ Hiện tại chưa có bài thi nào được đăng. Vui lòng liên hệ Giáo viên!")
