@@ -6,6 +6,8 @@ import re
 import os
 import json
 import requests
+import base64
+from io import BytesIO
 from PIL import Image
 
 # --- CẤU HÌNH TRANG ---
@@ -18,7 +20,7 @@ st.set_page_config(
 # 🔗 DÁN LINK GOOGLE WEB APP SCRIPT CỦA THẦY/CÔ VÀO ĐÂY:
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxdJTfcS9TZqkogncwxjVag27V2zgbPZGkW0qfhQd7JgIdzC3Mt32wo_CZfgYx2Xu1fjQ/exec"
 
-# --- CSS TỐI ƯU GIAO DIỆN & NÚT PHÓNG TO ---
+# --- CSS GIAO DIỆN TỐI ƯU ---
 st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
@@ -176,20 +178,39 @@ def extract_question_images(pdf_bytes):
                     pass
     return q_images
 
-# --- HÀM HIỂN THỊ HÌNH ẢNH KÈM NÚT BUNG / PHÓNG TO ---
+# --- HÀM CHUYỂN ẢNH THÀNH BASE64 ---
+def pil_to_base64(img):
+    buffered = BytesIO()
+    img.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode()
+
+# --- HÀM HIỂN THỊ HÌNH ẢNH KÈM NÚT BUNG RỜI TRANG MỚI ---
 def display_question_image(q_num, img):
-    # 1. Hiển thị ảnh kích thước chuẩn
+    # 1. Hiển thị ảnh bình thường trên khung đề thi
     try:
         st.image(img, use_container_width=True)
     except Exception:
         st.image(img, use_column_width=True)
     
-    # 2. Khung Bung phóng to toàn chiều rộng
-    with st.expander(f"🔍 Bấm vào đây để BUNG TO / PHÓNG ĐẠI ảnh Câu {q_num}"):
-        try:
-            st.image(img, use_container_width=True)
-        except Exception:
-            st.image(img, use_column_width=True)
+    # 2. Mã hóa ảnh sang Base64 và tạo nút bấm mở trang riêng để phóng to
+    img_b64 = pil_to_base64(img)
+    html_btn = f'''
+    <div style="margin-top: 8px; margin-bottom: 18px;">
+        <a href="data:image/png;base64,{img_b64}" target="_blank" style="
+            display: inline-block;
+            background-color: #2563eb;
+            color: #ffffff;
+            padding: 8px 16px;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 15px;
+            box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
+            transition: all 0.2s ease;
+        ">🔍 Mở ảnh Câu {q_num} ra trang riêng (Phóng to / Soi chữ cực đại) ↗️</a>
+    </div>
+    '''
+    st.markdown(html_btn, unsafe_allow_html=True)
 
 if 'user_answers' not in st.session_state:
     st.session_state.user_answers = {}
@@ -257,7 +278,7 @@ if is_student_mode:
         with col_class:
             student_class = st.text_input("Lớp (*):", placeholder="Ví dụ: 12A1")
 
-        st.info("💡 **Mẹo:** Nếu hình câu hỏi nào chữ nhỏ, học sinh chỉ cần bấm nút **🔍 Bấm vào đây để BUNG TO / PHÓNG ĐẠI** dưới bức ảnh đó.")
+        st.info("💡 **Mẹo làm bài:** Nếu gặp chữ/đồ thị nhỏ, học sinh bấm nút xanh **`🔍 Mở ảnh ra trang riêng...`** bên dưới bức ảnh đó để phóng to toàn màn hình.")
         st.markdown("---")
 
         with open(PDF_SAVE_PATH, "rb") as f:
@@ -274,7 +295,7 @@ if is_student_mode:
                 st.markdown("<div class='quiz-card'>", unsafe_allow_html=True)
                 st.markdown(f"<div class='q-title'>Câu {q_num}</div>", unsafe_allow_html=True)
                 
-                # HIỂN THỊ CÂU HỎI KÈM NÚT BUNG PHÓNG TO
+                # Hiển thị ảnh + Nút mở trang riêng phóng to
                 display_question_image(q_num, q_images[q_num])
                 
                 ans_key = f"p1_{q_num}"
@@ -296,7 +317,7 @@ if is_student_mode:
                 st.markdown("<div class='quiz-card'>", unsafe_allow_html=True)
                 st.markdown(f"<div class='q-title'>Câu {q_num}</div>", unsafe_allow_html=True)
                 
-                # HIỂN THỊ CÂU HỎI KÈM NÚT BUNG PHÓNG TO
+                # Hiển thị ảnh + Nút mở trang riêng phóng to
                 display_question_image(q_num, q_images[q_num])
                 
                 st.markdown("<p style='font-size: 18px; font-weight: bold;'>Chọn Đúng/Sai cho các mệnh đề a), b), c), d):</p>", unsafe_allow_html=True)
@@ -322,7 +343,7 @@ if is_student_mode:
                 st.markdown("<div class='quiz-card'>", unsafe_allow_html=True)
                 st.markdown(f"<div class='q-title'>Câu {q_num}</div>", unsafe_allow_html=True)
                 
-                # HIỂN THỊ CÂU HỎI KÈM NÚT BUNG PHÓNG TO
+                # Hiển thị ảnh + Nút mở trang riêng phóng to
                 display_question_image(q_num, q_images[q_num])
                 
                 ans_key = f"p3_{q_num}"
