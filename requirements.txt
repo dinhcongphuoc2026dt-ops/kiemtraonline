@@ -1,4 +1,6 @@
 streamlit
-requests
 pandas
+pdfplumber
+pillow
+requests
 openpyxl
